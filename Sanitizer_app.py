@@ -64,7 +64,7 @@ def sidebar_settings():
     st.sidebar.subheader("QA Checks")
     flag_tag_issues = st.sidebar.checkbox("Malformed Tags", True)
     flag_source_equals_target = st.sidebar.checkbox("Source = Target", True)
-    flag_german_micro_qa = st.sidebar.checkbox("German Micro QA", True)
+    flag_german_micro_qa = st.sidebar.checkbox("German Micro QA", False)
     flag_brand_protection = st.sidebar.checkbox("Brand Protection", True)
     flag_placeholder_issues = st.sidebar.checkbox("Placeholder Mismatch", True)
     flag_number_issues = st.sidebar.checkbox("Number Mismatch", True)
