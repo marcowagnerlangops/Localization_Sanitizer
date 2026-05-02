@@ -25,8 +25,8 @@ from sanitizer_core import (
     records_to_dataframe,
 )
 
-APP_TITLE = "LangOps Sanitizer Pro"
-APP_VERSION = "4.2"
+APP_TITLE = "LangOps Sanitizer"
+APP_VERSION = "1.2"
 MAKER_LINE = "Made by LangOps Solutions"
 
 
