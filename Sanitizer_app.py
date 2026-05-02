@@ -12,8 +12,14 @@ from ai_reviewer import (
     LANGUAGE_OPTIONS,
     STRICTNESS_OPTIONS,
     apply_ai_result,
-    review_segment_with_openai,
+    build_ai_prompt,
     select_records_for_ai,
+)
+
+from ai_providers import (
+    review_openai,
+    review_ollama,
+    review_azure,
 )
 from sanitizer_core import (
     BrandRules,
@@ -698,198 +704,216 @@ def main():
                     st.rerun()
 
     # ======================================================
-    # TAB 5 AI REVIEW
-    # ======================================================
+# TAB 5 AI REVIEW
+# ======================================================
 
-    with tabs[4]:
-        if not st.session_state.records:
-            st.info("Load and analyze files first.")
+with tabs[4]:
+    if not st.session_state.records:
+        st.info("Load and analyze files first.")
+    else:
+        st.subheader("AI Language Review")
+
+        st.write(
+            "Use OpenAI, Ollama or Azure OpenAI for grammar, fluency, idiomatic usage and rewrite suggestions."
+        )
+
+        c1, c2, c3 = st.columns(3)
+
+        with c1:
+            provider = st.selectbox(
+                "AI Provider",
+                ["OpenAI", "Ollama", "Azure OpenAI"]
+            )
+
+            model = st.text_input(
+                "Model / Deployment",
+                value="gpt-5.2"
+            )
+
+        with c2:
+            language = st.selectbox(
+                "Target Language for AI Review",
+                LANGUAGE_OPTIONS,
+                index=0,
+            )
+
+            custom_language = ""
+
+            if language == "Custom":
+                custom_language = st.text_input(
+                    "Custom Target Language"
+                )
+
+            strictness = st.selectbox(
+                "Review Strictness",
+                STRICTNESS_OPTIONS,
+                index=1,
+            )
+
+        with c3:
+            mode = st.selectbox(
+                "Review Scope",
+                AI_REVIEW_MODES,
+                index=0,
+            )
+
+            max_segments = st.number_input(
+                "Max Segments per Run",
+                min_value=1,
+                max_value=500,
+                value=25,
+                step=5,
+            )
+
+        # Provider Credentials
+        if provider == "OpenAI":
+            api_key = st.text_input(
+                "OpenAI API Key",
+                type="password"
+            )
+            base_url = ""
+            endpoint = ""
+
+        elif provider == "Ollama":
+            api_key = ""
+            base_url = st.text_input(
+                "Ollama Base URL",
+                value="http://localhost:11434"
+            )
+            endpoint = ""
+
         else:
-            st.subheader("AI Language Review")
-
-            st.write(
-                "Optional AI layer for grammar, fluency, idiomatic usage, and rewrite suggestions. "
-                "Your API key is used only for this session and is not stored by the app."
+            endpoint = st.text_input(
+                "Azure Endpoint",
+                placeholder="https://your-resource.openai.azure.com"
             )
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                api_key = st.text_input(
-                    "OpenAI API Key",
-                    type="password",
-                    help="Use your own OpenAI API key.",
-                )
-                model = st.text_input("Model", value="gpt-5.2")
-
-            with c2:
-                language = st.selectbox(
-                    "Target Language for AI Review",
-                    LANGUAGE_OPTIONS,
-                    index=0,
-                )
-
-                custom_language = ""
-
-                if language == "Custom":
-                    custom_language = st.text_input("Custom Target Language")
-
-            with c3:
-                strictness = st.selectbox(
-                    "Review Strictness",
-                    STRICTNESS_OPTIONS,
-                    index=1,
-                )
-
-                mode = st.selectbox(
-                    "Review Scope",
-                    AI_REVIEW_MODES,
-                    index=0,
-                )
-
-                max_segments = st.number_input(
-                    "Max Segments per Run",
-                    min_value=1,
-                    max_value=500,
-                    value=25,
-                    step=5,
-                )
-
-            custom_instructions = st.text_area(
-                "Optional Custom AI Instructions",
-                value="",
-                placeholder="Example: Use a professional but friendly marketing tone. Keep product names unchanged.",
-                height=90,
+            api_key = st.text_input(
+                "Azure API Key",
+                type="password"
             )
+            base_url = ""
 
-            target_language = (
-                custom_language.strip()
-                if language == "Custom" and custom_language.strip()
-                else language
-            )
+        custom_instructions = st.text_area(
+            "Optional Custom AI Instructions",
+            value="",
+            height=90,
+        )
 
-            selected_for_ai = select_records_for_ai(
-                st.session_state.records,
-                mode,
-                int(max_segments),
-            )
+        target_language = (
+            custom_language.strip()
+            if language == "Custom" and custom_language.strip()
+            else language
+        )
 
-            st.info(f"Segments selected for AI review: {len(selected_for_ai)}")
+        selected_for_ai = select_records_for_ai(
+            st.session_state.records,
+            mode,
+            int(max_segments),
+        )
 
-            if st.button("Run AI Review", type="primary", use_container_width=True):
-                if not api_key.strip():
-                    st.warning("Please enter your OpenAI API key.")
-                elif not selected_for_ai:
-                    st.warning("No segments match the selected AI review scope.")
-                else:
-                    progress = st.progress(0)
-                    reviewed = 0
-                    errors = 0
+        st.info(
+            f"Segments selected for AI review: {len(selected_for_ai)}"
+        )
 
-                    for idx, record in enumerate(selected_for_ai, start=1):
-                        try:
-                            result = review_segment_with_openai(
-                                record=record,
-                                api_key=api_key.strip(),
-                                model=model.strip() or "gpt-5.2",
-                                target_language=target_language,
-                                strictness=strictness,
-                                custom_instructions=custom_instructions,
+        if st.button(
+            "Run AI Review",
+            type="primary",
+            use_container_width=True
+        ):
+            if not selected_for_ai:
+                st.warning("No segments selected.")
+            else:
+                progress = st.progress(0)
+                reviewed = 0
+                errors = 0
+
+                for idx, record in enumerate(
+                    selected_for_ai,
+                    start=1
+                ):
+                    try:
+                        prompt = build_ai_prompt(
+                            record,
+                            target_language,
+                            strictness,
+                            custom_instructions,
+                        )
+
+                        if provider == "OpenAI":
+                            result = review_openai(
+                                prompt,
+                                api_key,
+                                model,
+                                target_language
                             )
 
-                            apply_ai_result(record, result)
-                            reviewed += 1
+                        elif provider == "Ollama":
+                            result = review_ollama(
+                                prompt,
+                                base_url,
+                                model,
+                                target_language
+                            )
 
-                        except Exception as exc:
-                            record.ai_status = "ERROR"
-                            record.ai_severity = ""
-                            record.ai_suggestion = ""
-                            record.ai_explanation = str(exc)
-                            record.ai_model = model.strip() or "gpt-5.2"
-                            record.ai_language = target_language
-                            errors += 1
+                        else:
+                            result = review_azure(
+                                prompt,
+                                endpoint,
+                                api_key,
+                                model,
+                                target_language
+                            )
 
-                        progress.progress(idx / len(selected_for_ai))
+                        apply_ai_result(record, result)
+                        reviewed += 1
 
-                    st.session_state.stats = build_stats(st.session_state.records)
+                    except Exception as exc:
+                        record.ai_status = "ERROR"
+                        record.ai_explanation = str(exc)
+                        record.ai_model = model
+                        record.ai_language = target_language
+                        errors += 1
 
-                    log(
-                        f"AI review complete | reviewed={reviewed} | "
-                        f"errors={errors} | model={model}"
+                    progress.progress(
+                        idx / len(selected_for_ai)
                     )
 
-                    st.success(
-                        f"AI review complete. Reviewed {reviewed} segment(s). "
-                        f"Errors: {errors}."
-                    )
+                st.session_state.stats = build_stats(
+                    st.session_state.records
+                )
 
-            st.divider()
-            st.subheader("AI Review Results")
+                log(
+                    f"AI review complete | provider={provider} | "
+                    f"reviewed={reviewed} | errors={errors}"
+                )
 
-            df = records_to_dataframe(st.session_state.records)
+                st.success(
+                    f"AI review complete. "
+                    f"Reviewed {reviewed}. Errors: {errors}."
+                )
 
-            if "AI Status" in df.columns:
-                ai_df = df[df["AI Status"].fillna("Not reviewed") != "Not reviewed"]
-            else:
-                ai_df = pd.DataFrame()
+        st.divider()
+        st.subheader("AI Review Results")
 
-            st.dataframe(
-                ai_df,
-                use_container_width=True,
-                hide_index=True,
-                height=420,
-            )
+        df = records_to_dataframe(
+            st.session_state.records
+        )
 
-            st.subheader("Accept AI Suggestion")
-
-            suggestion_records = [
-                r for r in st.session_state.records
-                if getattr(r, "ai_suggestion", "")
+        if "AI Status" in df.columns:
+            ai_df = df[
+                df["AI Status"]
+                .fillna("Not reviewed")
+                != "Not reviewed"
             ]
+        else:
+            ai_df = pd.DataFrame()
 
-            if not suggestion_records:
-                st.caption("No AI suggestions available yet.")
-            else:
-                selected_id = st.selectbox(
-                    "Select Record ID with AI Suggestion",
-                    [r.record_id for r in suggestion_records],
-                )
-
-                selected_record = next(
-                    r for r in suggestion_records
-                    if r.record_id == selected_id
-                )
-
-                st.text_area(
-                    "Current Target",
-                    value=selected_record.target_text,
-                    height=100,
-                    disabled=True,
-                )
-
-                st.text_area(
-                    "AI Suggestion",
-                    value=selected_record.ai_suggestion,
-                    height=100,
-                    disabled=True,
-                )
-
-                if st.button(
-                    "Accept Suggestion for Selected Record",
-                    use_container_width=True,
-                ):
-                    selected_record.target_text = selected_record.ai_suggestion
-                    selected_record.notes = (
-                        (selected_record.notes + "; ")
-                        if selected_record.notes
-                        else ""
-                    ) + "AI suggestion accepted"
-
-                    rerun_qa(settings)
-                    log(f"Accepted AI suggestion for record {selected_id}")
-                    st.success("AI suggestion accepted and rule-based QA re-run.")
-                    st.rerun()
-
+        st.dataframe(
+            ai_df,
+            use_container_width=True,
+            hide_index=True,
+            height=420,
+        )
     # ======================================================
     # TAB 6 MERGE CENTER
     # ======================================================
