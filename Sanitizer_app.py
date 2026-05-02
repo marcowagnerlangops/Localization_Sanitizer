@@ -724,10 +724,17 @@ def main():
                     "AI Provider",
                     ["OpenAI", "Ollama", "Azure OpenAI"]
                 )
-    
+            
+                if provider == "OpenAI":
+                    default_model = "gpt-5.2"
+                elif provider == "Ollama":
+                    default_model = "qwen2.5:7b"
+                else:
+                    default_model = "your-deployment-name"
+            
                 model = st.text_input(
                     "Model / Deployment",
-                    value="gpt-5.2"
+                    value=default_model
                 )
     
             with c2:
