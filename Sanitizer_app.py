@@ -704,10 +704,10 @@ def main():
                     st.rerun()
 
     # ======================================================
-# TAB 5 AI REVIEW
-# ======================================================
+    # TAB 5 AI REVIEW
+    # ======================================================
 
-with tabs[4]:
+    with tabs[4]:
     if not st.session_state.records:
         st.info("Load and analyze files first.")
     else:
