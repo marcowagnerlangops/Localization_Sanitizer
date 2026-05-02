@@ -272,7 +272,7 @@ def main():
     st.set_page_config(page_title=APP_TITLE, page_icon="🧼", layout="wide")
     init_state()
 
-    st.title("🧼 LangOps Sanitizer Pro")
+    st.title("🧼 LangOps Sanitizer")
     st.caption("Clean, QA, merge, edit and export TMX, XLSX, CSV, XLIFF, XLF, TXLF and XLZ localization assets.")
 
     settings = sidebar_settings()
