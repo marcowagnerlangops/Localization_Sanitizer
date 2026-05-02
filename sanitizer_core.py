@@ -7,29 +7,37 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
 
+# ============================================================
+# DATA MODELS
+# ============================================================
+
 @dataclass
 class SegmentRecord:
     record_id: int
     file_name: str
     file_type: str
     unit_id: str
+
     source_lang: str
     target_lang: str
+
     source_text: str
     target_text: str
+
     source_path: str = ""
     target_path: str = ""
     notes: str = ""
+
     issue_count: int = 0
     severity: str = "OK"
     issue_categories: str = ""
     issue_details: str = ""
     repair_actions: str = ""
+
     lqa_severity: str = "OK"
     lqa_penalty: int = 0
     lqa_details: str = ""
 
-    # Optional AI review layer
     ai_status: str = "Not reviewed"
     ai_severity: str = ""
     ai_suggestion: str = ""
@@ -67,44 +75,16 @@ class SanitizerSettings:
     enable_lqa_scoring: bool = True
 
 
-LANGUAGE_CODE_MAP = {
-    "de": "de-DE",
-    "de-de": "de-DE",
-    "de_de": "de-DE",
-    "deu": "de-DE",
-    "ger": "de-DE",
-    "en": "en-US",
-    "en-us": "en-US",
-    "en_us": "en-US",
-    "eng": "en-US",
-    "en-gb": "en-GB",
-    "en_gb": "en-GB",
-    "en-uk": "en-GB",
-    "fr": "fr-FR",
-    "fr-ca": "fr-CA",
-    "es": "es-ES",
-    "es-mx": "es-MX",
-    "pt": "pt-PT",
-    "pt-br": "pt-BR",
-    "it": "it-IT",
-    "nl": "nl-NL",
-    "ja": "ja-JP",
-    "ko": "ko-KR",
-    "zh": "zh-CN",
-    "zh-tw": "zh-TW",
-}
-
-
-def normalize_language_code(code: str) -> str:
-    raw = (code or "").strip()
-    if not raw:
-        return ""
-    key = raw.lower().replace("_", "-")
-    return LANGUAGE_CODE_MAP.get(key, raw.replace("_", "-"))
-
+# ============================================================
+# HELPERS
+# ============================================================
 
 def is_german(code: str) -> bool:
     return (code or "").lower().startswith("de")
+
+
+def normalize_language_code(code: str) -> str:
+    return (code or "").strip()
 
 
 # ============================================================
@@ -113,27 +93,46 @@ def is_german(code: str) -> bool:
 
 class MarkupCleaner:
     """
-    Removes XML / HTML / XLIFF markup before linguistic checks.
+    Removes technical tags from visible text checks.
+
+    Valid tag start:
+    < immediately followed by letter or number
+
+    Examples:
+    <bpt>
+    <x1>
+    <ph id="1">
+
+    Not a tag:
+    < 5
+    x < y
+    A < B
     """
+
+    REAL_TAG = re.compile(
+        r"<[A-Za-z0-9][^>]*>",
+        flags=re.DOTALL
+    )
+
+    ESCAPED_TAG = re.compile(
+        r"&lt;[A-Za-z0-9].*?&gt;",
+        flags=re.DOTALL
+    )
 
     @staticmethod
     def strip_markup(text: str) -> str:
         value = text or ""
 
-        # Remove escaped tags
-        value = re.sub(r"&lt;.*?&gt;", " ", value, flags=re.DOTALL)
+        value = MarkupCleaner.ESCAPED_TAG.sub(" ", value)
+        value = MarkupCleaner.REAL_TAG.sub(" ", value)
 
-        # Remove real tags
-        value = re.sub(r"<[^>]+>", " ", value, flags=re.DOTALL)
-
-        # Normalize whitespace
         value = re.sub(r"\s+", " ", value).strip()
 
         return value
 
 
 # ============================================================
-# RULES
+# BRAND / GLOSSARY
 # ============================================================
 
 class BrandRules:
@@ -141,20 +140,18 @@ class BrandRules:
         self.rules = []
 
     def load_from_dataframe(self, df):
-        if df.shape[1] < 2:
-            raise ValueError(
-                "Brand file needs Column A = source term and Column B = required target representation."
-            )
-
         self.rules = []
 
-        for _, row in df.iterrows():
-            source = "" if row.iloc[0] is None else str(row.iloc[0]).strip()
-            target = "" if row.iloc[1] is None else str(row.iloc[1]).strip()
+        if df.shape[1] < 2:
+            return 0
 
-            if source and target and source.lower() not in {"source", "source term"}:
+        for _, row in df.iterrows():
+            s = str(row.iloc[0]).strip()
+            t = str(row.iloc[1]).strip()
+
+            if s and t:
                 self.rules.append(
-                    {"source": source, "required": target}
+                    {"source": s, "required": t}
                 )
 
         return len(self.rules)
@@ -165,20 +162,18 @@ class GlossaryRules:
         self.rules = []
 
     def load_from_dataframe(self, df):
-        if df.shape[1] < 2:
-            raise ValueError(
-                "Glossary needs Column A = source term and Column B = required target term."
-            )
-
         self.rules = []
 
-        for _, row in df.iterrows():
-            source = "" if row.iloc[0] is None else str(row.iloc[0]).strip()
-            target = "" if row.iloc[1] is None else str(row.iloc[1]).strip()
+        if df.shape[1] < 2:
+            return 0
 
-            if source and target and source.lower() not in {"source", "source term"}:
+        for _, row in df.iterrows():
+            s = str(row.iloc[0]).strip()
+            t = str(row.iloc[1]).strip()
+
+            if s and t:
                 self.rules.append(
-                    {"source": source, "required": target}
+                    {"source": s, "required": t}
                 )
 
         return len(self.rules)
@@ -189,6 +184,7 @@ class GlossaryRules:
 # ============================================================
 
 class RepairEngine:
+
     ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\ufeff]")
 
     @staticmethod
@@ -199,31 +195,31 @@ class RepairEngine:
         before = value
         if settings.normalize_unicode:
             value = unicodedata.normalize("NFC", value)
-            if value != before:
+            if before != value:
                 actions.append("Unicode normalized")
 
         before = value
         if settings.replace_nbsp:
             value = value.replace("\xa0", " ")
-            if value != before:
+            if before != value:
                 actions.append("NBSP replaced")
 
         before = value
         if settings.remove_zero_width:
             value = RepairEngine.ZERO_WIDTH.sub("", value)
-            if value != before:
+            if before != value:
                 actions.append("Zero-width removed")
 
         before = value
         if settings.collapse_spaces:
             value = re.sub(r"[ \t]{2,}", " ", value)
-            if value != before:
+            if before != value:
                 actions.append("Repeated spaces collapsed")
 
         before = value
         if settings.trim_spaces:
             value = value.strip()
-            if value != before:
+            if before != value:
                 actions.append("Trimmed")
 
         return value, actions
@@ -233,33 +229,24 @@ class RepairEngine:
         changed = 0
 
         for r in records:
-            before = (r.source_text, r.target_text, r.source_lang, r.target_lang)
+            old = (r.source_text, r.target_text)
 
-            src, a1 = RepairEngine.repair_text(r.source_text, settings)
-            tgt, a2 = RepairEngine.repair_text(r.target_text, settings)
+            r.source_text, a1 = RepairEngine.repair_text(
+                r.source_text, settings
+            )
 
-            r.source_text = src
-            r.target_text = tgt
+            r.target_text, a2 = RepairEngine.repair_text(
+                r.target_text, settings
+            )
 
-            actions = [f"Source: {x}" for x in a1] + [f"Target: {x}" for x in a2]
+            r.repair_actions = "; ".join(
+                [f"Source: {x}" for x in a1] +
+                [f"Target: {x}" for x in a2]
+            )
 
-            if settings.normalize_language_codes:
-                old1 = r.source_lang
-                old2 = r.target_lang
+            new = (r.source_text, r.target_text)
 
-                r.source_lang = normalize_language_code(r.source_lang)
-                r.target_lang = normalize_language_code(r.target_lang)
-
-                if old1 != r.source_lang:
-                    actions.append(f"Source lang {old1}->{r.source_lang}")
-                if old2 != r.target_lang:
-                    actions.append(f"Target lang {old2}->{r.target_lang}")
-
-            r.repair_actions = "; ".join(actions)
-
-            after = (r.source_text, r.target_text, r.source_lang, r.target_lang)
-
-            if before != after:
+            if old != new:
                 changed += 1
 
         return changed
@@ -273,25 +260,25 @@ LQA_WEIGHTS = {
     "Critical": 10,
     "Major": 5,
     "Minor": 1,
-    "OK": 0,
+    "OK": 0
 }
 
-LQA_RANK = {
+LQA_ORDER = {
     "OK": 0,
     "Minor": 1,
     "Major": 2,
-    "Critical": 3,
+    "Critical": 3
 }
 
 
-def worst_lqa_severity(severities: List[str]) -> str:
-    if not severities:
+def worst(items):
+    if not items:
         return "OK"
 
-    return max(severities, key=lambda s: LQA_RANK.get(s, 0))
+    return sorted(items, key=lambda x: LQA_ORDER[x])[-1]
 
 
-def quality_label(score: int) -> str:
+def score_label(score):
     if score >= 90:
         return "Excellent"
     if score >= 80:
@@ -301,180 +288,165 @@ def quality_label(score: int) -> str:
     return "Fail"
 
 
-def calculate_quality_score(records: List[SegmentRecord]) -> Tuple[int, int]:
-    total_penalty = sum(max(0, int(r.lqa_penalty or 0)) for r in records)
-    score = max(0, 100 - total_penalty)
-    return score, total_penalty
-
-
 # ============================================================
 # QA ENGINE
 # ============================================================
 
 class QAEngine:
 
-    PLACEHOLDER_PATTERNS = [
-        r"\{\d+\}",
-        r"\{[A-Za-z0-9_]+\}",
-        r"%s",
-        r"%d",
-        r"<[^>]+>",
-    ]
-
+    # strict tag opener only
     TAG_PATTERN = re.compile(
-        r"</?([A-Za-z][A-Za-z0-9:_-]*)(?:\s[^>]*)?>"
+        r"</?[A-Za-z0-9][A-Za-z0-9:_-]*(?:\s[^>]*)?>"
     )
 
     @staticmethod
+    def add_issue(issues, cats, lqa, cat, msg, sev):
+        issues.append(msg)
+        cats.append(cat)
+        lqa.append((sev, msg))
+
+    @staticmethod
     def placeholders(text):
-        found = []
-
-        for patt in QAEngine.PLACEHOLDER_PATTERNS:
-            found.extend(re.findall(patt, text or ""))
-
-        return sorted(found)
+        return re.findall(
+            r"\{.*?\}|%s|%d",
+            text or ""
+        )
 
     @staticmethod
     def numbers(text):
-        return re.findall(r"\d+(?:[\.,]\d+)?", text or "")
+        return re.findall(
+            r"\d+(?:[\.,]\d+)?",
+            text or ""
+        )
 
     @staticmethod
     def end_punct(text):
-        text = (text or "").strip()
-        return text[-1] if text and text[-1] in ".,:;!?" else ""
+        val = (text or "").strip()
+        return val[-1] if val and val[-1] in ".,:;!?" else ""
 
     @staticmethod
-    def has_tag_issue(text):
-        text = text or ""
+    def malformed_tag(text):
+        txt = text or ""
 
-        if "<" not in text and ">" not in text:
+        tags = QAEngine.TAG_PATTERN.findall(txt)
+
+        if not tags:
             return False
 
-        if text.count("<") != text.count(">"):
-            return True
+        opens = sum(
+            1 for t in tags
+            if not t.startswith("</")
+            and not t.endswith("/>")
+        )
 
-        stack = []
+        closes = sum(
+            1 for t in tags
+            if t.startswith("</")
+        )
 
-        for m in QAEngine.TAG_PATTERN.finditer(text):
-            full = m.group(0)
-            tag = m.group(1).lower()
-
-            if full.endswith("/>") or tag in {
-                "br", "hr", "img", "input", "meta", "link"
-            }:
-                continue
-
-            if full.startswith("</"):
-                if not stack or stack[-1] != tag:
-                    return True
-                stack.pop()
-            else:
-                stack.append(tag)
-
-        return bool(stack)
+        return opens != closes
 
     @staticmethod
-    def add_issue(issues, cats, lqa_items, category, message, severity):
-        issues.append(message)
-        cats.append(category)
-        lqa_items.append((severity, message))
+    def brand_violations(source, target, rules):
+        out = []
 
-    @staticmethod
-    def brand_violations(source, target, brand_rules):
-        issues = []
+        for r in rules.rules:
+            patt = r"\b" + re.escape(r["source"]) + r"\b"
 
-        for rule in brand_rules.rules:
-            patt = r"\b" + re.escape(rule["source"]) + r"\b"
+            if re.search(patt, source, re.I):
+                req = r"\b" + re.escape(r["required"]) + r"\b"
 
-            if re.search(patt, source or "", flags=re.IGNORECASE):
-                required = r"\b" + re.escape(rule["required"]) + r"\b"
-
-                if not re.search(required, target or "", flags=re.IGNORECASE):
-                    issues.append(
-                        f"Protected term '{rule['source']}' should be '{rule['required']}'"
+                if not re.search(req, target, re.I):
+                    out.append(
+                        f"Protected term '{r['source']}' should be '{r['required']}'"
                     )
 
-        return issues
+        return out
 
     @staticmethod
-    def glossary_violations(source, target, glossary_rules):
-        issues = []
+    def glossary_violations(source, target, rules):
+        out = []
 
-        for rule in glossary_rules.rules:
-            source_patt = r"\b" + re.escape(rule["source"]) + r"\b"
+        for r in rules.rules:
+            patt = r"\b" + re.escape(r["source"]) + r"\b"
 
-            if re.search(source_patt, source or "", flags=re.IGNORECASE):
-                target_patt = r"\b" + re.escape(rule["required"]) + r"\b"
+            if re.search(patt, source, re.I):
+                req = r"\b" + re.escape(r["required"]) + r"\b"
 
-                if not re.search(target_patt, target or "", flags=re.IGNORECASE):
-                    issues.append(
-                        f"Glossary violation: {rule['source']} -> {rule['required']}"
+                if not re.search(req, target, re.I):
+                    out.append(
+                        f"Glossary violation: {r['source']} -> {r['required']}"
                     )
 
-        return issues
+        return out
 
     @staticmethod
-    def german_micro_issues(record):
+    def german_micro(record):
         if not is_german(record.target_lang):
             return []
 
-        target = MarkupCleaner.strip_markup(record.target_text)
+        visible = MarkupCleaner.strip_markup(
+            record.target_text
+        )
 
         issues = []
 
-        if re.search(r"\s+[.,:;!?]", target):
-            issues.append("German QA: space before punctuation")
+        if '"' in visible:
+            issues.append(
+                "German QA: straight quotes used"
+            )
 
         if re.search(
             r"\b(\w+)\s+\1\b",
-            target,
-            flags=re.IGNORECASE
-        ):
-            issues.append("German QA: repeated word")
-
-        # Quotes only in visible text
-        if '"' in target:
-            issues.append("German QA: straight quotes used")
-
-        if re.search(
-            r"\b(the|and|with|for|from|your|our|you)\b",
-            target,
-            flags=re.IGNORECASE
+            visible,
+            re.I
         ):
             issues.append(
-                "German QA: possible English word in German target"
+                "German QA: repeated word"
             )
 
         return issues
 
     @staticmethod
-    def typography_issues(target, settings):
-        visible = MarkupCleaner.strip_markup(target)
+    def typography(text, settings):
+        visible = MarkupCleaner.strip_markup(text)
 
-        issues = []
+        out = []
 
-        if settings.flag_double_ellipsis and re.search(r"\.{4,}", visible):
-            issues.append("Repeated ellipsis / too many dots")
+        if settings.flag_double_ellipsis:
+            if re.search(r"\.{4,}", visible):
+                out.append(
+                    "Repeated ellipsis / too many dots"
+                )
 
-        if settings.flag_double_dot and re.search(
-            r"(?<!\.)\.\.(?!\.)",
-            visible
-        ):
-            issues.append("Double period detected")
+        if settings.flag_double_dot:
+            if re.search(
+                r"(?<!\.)\.\.(?!\.)",
+                visible
+            ):
+                out.append(
+                    "Double period detected"
+                )
 
-        if settings.flag_double_spaces and re.search(
-            r" {2,}",
-            visible
-        ):
-            issues.append("Double spaces detected")
+        if settings.flag_double_spaces:
+            if re.search(
+                r" {2,}",
+                visible
+            ):
+                out.append(
+                    "Double spaces detected"
+                )
 
-        if settings.flag_space_before_period and re.search(
-            r"\s+\.",
-            visible
-        ):
-            issues.append("Space before period detected")
+        if settings.flag_space_before_period:
+            if re.search(
+                r"\s+\.",
+                visible
+            ):
+                out.append(
+                    "Space before period detected"
+                )
 
-        return issues
+        return out
 
     @staticmethod
     def apply(records, settings, brand_rules, glossary_rules):
@@ -483,15 +455,18 @@ class QAEngine:
 
             issues = []
             cats = []
-            lqa_items = []
+            lqa = []
 
             s = r.source_text or ""
             t = r.target_text or ""
 
+            # -------------------
             # Critical
+            # -------------------
+
             if not t.strip():
                 QAEngine.add_issue(
-                    issues, cats, lqa_items,
+                    issues, cats, lqa,
                     "Missing Target",
                     "Missing target",
                     "Critical"
@@ -500,7 +475,7 @@ class QAEngine:
             if settings.flag_placeholder_issues:
                 if QAEngine.placeholders(s) != QAEngine.placeholders(t):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Placeholders",
                         "Placeholder mismatch",
                         "Critical"
@@ -509,143 +484,122 @@ class QAEngine:
             if settings.flag_number_issues:
                 if QAEngine.numbers(s) != QAEngine.numbers(t):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Numbers",
                         "Number mismatch",
                         "Critical"
                     )
 
             if settings.flag_tag_issues:
-                if QAEngine.has_tag_issue(s):
+                if QAEngine.malformed_tag(s):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Tags",
                         "Source malformed tags",
                         "Critical"
                     )
 
-                if QAEngine.has_tag_issue(t):
+                if QAEngine.malformed_tag(t):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Tags",
                         "Target malformed tags",
                         "Critical"
                     )
 
+            # -------------------
             # Major
+            # -------------------
+
             if settings.flag_source_equals_target:
                 if s.strip() and t.strip() and s.strip() == t.strip():
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Source=Target",
                         "Target equals source",
                         "Major"
                     )
 
-            if settings.flag_length_ratio and s:
-                ratio = len(t) / max(1, len(s))
-
-                if ratio < 0.35 or ratio > 2.8:
-                    QAEngine.add_issue(
-                        issues, cats, lqa_items,
-                        "Length",
-                        "Suspicious length ratio",
-                        "Major"
-                    )
-
             if settings.flag_brand_protection:
-                for msg in QAEngine.brand_violations(
+                for x in QAEngine.brand_violations(
                     s, t, brand_rules
                 ):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Brand Protection",
-                        msg,
+                        x,
                         "Major"
                     )
 
             if settings.flag_glossary_violations:
-                for msg in QAEngine.glossary_violations(
+                for x in QAEngine.glossary_violations(
                     s, t, glossary_rules
                 ):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
+                        issues, cats, lqa,
                         "Glossary",
-                        msg,
+                        x,
                         "Major"
                     )
 
+            # -------------------
             # Minor
+            # -------------------
+
             if settings.flag_punctuation_issues:
                 if QAEngine.end_punct(s) != QAEngine.end_punct(t):
-                    if QAEngine.end_punct(s) or QAEngine.end_punct(t):
-                        QAEngine.add_issue(
-                            issues, cats, lqa_items,
-                            "Punctuation",
-                            "Ending punctuation mismatch",
-                            "Minor"
-                        )
-
-            if settings.flag_german_micro_qa:
-                for msg in QAEngine.german_micro_issues(r):
                     QAEngine.add_issue(
-                        issues, cats, lqa_items,
-                        "German QA",
-                        msg,
+                        issues, cats, lqa,
+                        "Punctuation",
+                        "Ending punctuation mismatch",
                         "Minor"
                     )
 
-            for msg in QAEngine.typography_issues(t, settings):
+            if settings.flag_german_micro_qa:
+                for x in QAEngine.german_micro(r):
+                    QAEngine.add_issue(
+                        issues, cats, lqa,
+                        "German QA",
+                        x,
+                        "Minor"
+                    )
+
+            for x in QAEngine.typography(t, settings):
                 QAEngine.add_issue(
-                    issues, cats, lqa_items,
+                    issues, cats, lqa,
                     "Typography",
-                    msg,
+                    x,
                     "Minor"
                 )
 
             # Finalize
             r.issue_count = len(issues)
             r.severity = "Issues" if issues else "OK"
-            r.issue_categories = "; ".join(sorted(set(cats)))
+            r.issue_categories = "; ".join(
+                sorted(set(cats))
+            )
             r.issue_details = "; ".join(issues)
 
-            if settings.enable_lqa_scoring:
-                severities = [item[0] for item in lqa_items]
+            sev = [x[0] for x in lqa]
 
-                r.lqa_severity = worst_lqa_severity(severities)
-
-                r.lqa_penalty = sum(
-                    LQA_WEIGHTS.get(item[0], 0)
-                    for item in lqa_items
-                )
-
-                r.lqa_details = "; ".join(
-                    [f"{sev}: {msg}" for sev, msg in lqa_items]
-                )
-
-            else:
-                r.lqa_severity = "OK" if not issues else "Unscored"
-                r.lqa_penalty = 0
-                r.lqa_details = ""
+            r.lqa_severity = worst(sev)
+            r.lqa_penalty = sum(
+                LQA_WEIGHTS[x[0]] for x in lqa
+            )
+            r.lqa_details = "; ".join(
+                f"{a}: {b}" for a, b in lqa
+            )
 
 
 # ============================================================
 # STATS
 # ============================================================
 
-def _severity_issue_count(records, severity):
-    prefix = f"{severity}:"
-
-    return sum(
-        1
-        for r in records
-        for item in (r.lqa_details or "").split(";")
-        if item.strip().startswith(prefix)
-    )
-
-
 def build_stats(records):
-    quality_score, total_penalty = calculate_quality_score(records)
+
+    penalty = sum(r.lqa_penalty for r in records)
+
+    score = max(0, 100 - penalty)
 
     return {
         "total_segments": len(records),
@@ -655,44 +609,13 @@ def build_stats(records):
         "clean_segments": sum(
             1 for r in records if not r.issue_count
         ),
-
-        "critical_issues": _severity_issue_count(records, "Critical"),
-        "major_issues": _severity_issue_count(records, "Major"),
-        "minor_issues": _severity_issue_count(records, "Minor"),
-
-        "quality_score": quality_score,
-        "quality_label": quality_label(quality_score),
-        "total_lqa_penalty": total_penalty,
-
-        "lqa_segment_severity": Counter(
-            r.lqa_severity for r in records
-        ),
-
+        "quality_score": score,
+        "quality_label": score_label(score),
         "issue_categories": Counter(
             cat.strip()
             for r in records
             for cat in r.issue_categories.split(";")
             if cat.strip()
-        ),
-
-        "file_types": Counter(r.file_type for r in records),
-
-        "language_pairs": Counter(
-            f"{r.source_lang}>{r.target_lang}"
-            for r in records
-        ),
-
-        "ai_reviewed_segments": sum(
-            1 for r in records
-            if r.ai_status not in {"", "Not reviewed"}
-        ),
-
-        "ai_status_counts": Counter(
-            r.ai_status for r in records if r.ai_status
-        ),
-
-        "ai_severity_counts": Counter(
-            r.ai_severity for r in records if r.ai_severity
         ),
     }
 
@@ -704,33 +627,33 @@ def build_stats(records):
 def records_to_dataframe(records):
     import pandas as pd
 
-    return pd.DataFrame(
-        [
-            {
-                "Record ID": r.record_id,
-                "File": r.file_name,
-                "Type": r.file_type,
-                "Unit ID": r.unit_id,
-                "Source Lang": r.source_lang,
-                "Target Lang": r.target_lang,
-                "Source": r.source_text,
-                "Target": r.target_text,
-                "Severity": r.severity,
-                "Issue Count": r.issue_count,
-                "Issue Categories": r.issue_categories,
-                "Issue Details": r.issue_details,
-                "LQA Severity": r.lqa_severity,
-                "LQA Penalty": r.lqa_penalty,
-                "LQA Details": r.lqa_details,
-                "AI Status": r.ai_status,
-                "AI Severity": r.ai_severity,
-                "AI Suggestion": r.ai_suggestion,
-                "AI Explanation": r.ai_explanation,
-                "AI Model": r.ai_model,
-                "AI Language": r.ai_language,
-                "Repair Actions": r.repair_actions,
-                "Notes": r.notes,
-            }
-            for r in records
-        ]
-    )
+    rows = []
+
+    for r in records:
+        rows.append({
+            "Record ID": r.record_id,
+            "File": r.file_name,
+            "Type": r.file_type,
+            "Unit ID": r.unit_id,
+            "Source Lang": r.source_lang,
+            "Target Lang": r.target_lang,
+            "Source": r.source_text,
+            "Target": r.target_text,
+            "Severity": r.severity,
+            "Issue Count": r.issue_count,
+            "Issue Categories": r.issue_categories,
+            "Issue Details": r.issue_details,
+            "LQA Severity": r.lqa_severity,
+            "LQA Penalty": r.lqa_penalty,
+            "LQA Details": r.lqa_details,
+            "AI Status": r.ai_status,
+            "AI Severity": r.ai_severity,
+            "AI Suggestion": r.ai_suggestion,
+            "AI Explanation": r.ai_explanation,
+            "AI Model": r.ai_model,
+            "AI Language": r.ai_language,
+            "Repair Actions": r.repair_actions,
+            "Notes": r.notes,
+        })
+
+    return pd.DataFrame(rows)
