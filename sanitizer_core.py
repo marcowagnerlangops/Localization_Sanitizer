@@ -93,20 +93,7 @@ def normalize_language_code(code: str) -> str:
 
 class MarkupCleaner:
     """
-    Removes technical tags from visible text checks.
-
-    A tag starts only when:
-    < immediately followed by letter or number
-
-    Valid:
-    <bpt>
-    <x1>
-    <ph id="1">
-
-    Invalid:
-    < 5
-    x < y
-    A < B
+    Only treat < as tag start when immediately followed by letter/number
     """
 
     REAL_TAG = re.compile(r"<[A-Za-z0-9][^>]*>", flags=re.DOTALL)
@@ -131,19 +118,14 @@ class BrandRules:
 
     def load_from_dataframe(self, df):
         self.rules = []
-
         if df.shape[1] < 2:
             return 0
 
         for _, row in df.iterrows():
-            src = str(row.iloc[0]).strip()
-            tgt = str(row.iloc[1]).strip()
-
-            if src and tgt:
-                self.rules.append({
-                    "source": src,
-                    "required": tgt
-                })
+            s = str(row.iloc[0]).strip()
+            t = str(row.iloc[1]).strip()
+            if s and t:
+                self.rules.append({"source": s, "required": t})
 
         return len(self.rules)
 
@@ -154,19 +136,14 @@ class GlossaryRules:
 
     def load_from_dataframe(self, df):
         self.rules = []
-
         if df.shape[1] < 2:
             return 0
 
         for _, row in df.iterrows():
-            src = str(row.iloc[0]).strip()
-            tgt = str(row.iloc[1]).strip()
-
-            if src and tgt:
-                self.rules.append({
-                    "source": src,
-                    "required": tgt
-                })
+            s = str(row.iloc[0]).strip()
+            t = str(row.iloc[1]).strip()
+            if s and t:
+                self.rules.append({"source": s, "required": t})
 
         return len(self.rules)
 
@@ -231,9 +208,7 @@ class RepairEngine:
                 [f"Target: {x}" for x in a2]
             )
 
-            new = (r.source_text, r.target_text)
-
-            if old != new:
+            if old != (r.source_text, r.target_text):
                 changed += 1
 
         return changed
@@ -324,37 +299,30 @@ class QAEngine:
         return opens != closes
 
     @staticmethod
+    def whole_word_exists(term, text):
+        patt = r"\b" + re.escape(term) + r"\b"
+        return re.search(patt, text or "", re.I) is not None
+
+    @staticmethod
     def brand_violations(source, target, rules):
         out = []
-
         for r in rules.rules:
-            patt = r"\b" + re.escape(r["source"]) + r"\b"
-
-            if re.search(patt, source, re.I):
-                req = r"\b" + re.escape(r["required"]) + r"\b"
-
-                if not re.search(req, target, re.I):
+            if QAEngine.whole_word_exists(r["source"], source):
+                if not QAEngine.whole_word_exists(r["required"], target):
                     out.append(
                         f"Protected term '{r['source']}' should be '{r['required']}'"
                     )
-
         return out
 
     @staticmethod
     def glossary_violations(source, target, rules):
         out = []
-
         for r in rules.rules:
-            patt = r"\b" + re.escape(r["source"]) + r"\b"
-
-            if re.search(patt, source, re.I):
-                req = r"\b" + re.escape(r["required"]) + r"\b"
-
-                if not re.search(req, target, re.I):
+            if QAEngine.whole_word_exists(r["source"], source):
+                if not QAEngine.whole_word_exists(r["required"], target):
                     out.append(
                         f"Glossary violation: {r['source']} -> {r['required']}"
                     )
-
         return out
 
     @staticmethod
@@ -370,6 +338,9 @@ class QAEngine:
 
         if re.search(r"\b(\w+)\s+\1\b", visible, re.I):
             issues.append("German QA: repeated word")
+
+        if re.search(r"\s+[.,:;!?]", visible):
+            issues.append("German QA: space before punctuation")
 
         return issues
 
@@ -404,7 +375,8 @@ class QAEngine:
             s = r.source_text or ""
             t = r.target_text or ""
 
-            # Critical
+            # ---------------- Critical ----------------
+
             if not t.strip():
                 QAEngine.add_issue(
                     issues, cats, lqa,
@@ -448,13 +420,24 @@ class QAEngine:
                         "Critical"
                     )
 
-            # Major
+            # ---------------- Major ----------------
+
             if settings.flag_source_equals_target:
                 if s.strip() and t.strip() and s.strip() == t.strip():
                     QAEngine.add_issue(
                         issues, cats, lqa,
                         "Source=Target",
                         "Target equals source",
+                        "Major"
+                    )
+
+            if settings.flag_length_ratio and s:
+                ratio = len(t) / max(1, len(s))
+                if ratio < 0.35 or ratio > 2.8:
+                    QAEngine.add_issue(
+                        issues, cats, lqa,
+                        "Length",
+                        "Suspicious length ratio",
                         "Major"
                     )
 
@@ -476,7 +459,8 @@ class QAEngine:
                         "Major"
                     )
 
-            # Minor
+            # ---------------- Minor ----------------
+
             if settings.flag_punctuation_issues:
                 if QAEngine.end_punct(s) != QAEngine.end_punct(t):
                     QAEngine.add_issue(
@@ -525,12 +509,41 @@ def build_stats(records):
     penalty = sum(r.lqa_penalty for r in records)
     score = max(0, 100 - penalty)
 
+    critical = 0
+    major = 0
+    minor = 0
+
+    severity_counter = Counter()
+
+    for r in records:
+        severity_counter[r.lqa_severity] += 1
+
+        details = r.lqa_details or ""
+        critical += details.count("Critical:")
+        major += details.count("Major:")
+        minor += details.count("Minor:")
+
     return {
         "total_segments": len(records),
-        "segments_with_issues": sum(1 for r in records if r.issue_count),
-        "clean_segments": sum(1 for r in records if not r.issue_count),
+
+        "segments_with_issues": sum(
+            1 for r in records if r.issue_count
+        ),
+
+        "clean_segments": sum(
+            1 for r in records if not r.issue_count
+        ),
+
         "quality_score": score,
         "quality_label": score_label(score),
+        "total_lqa_penalty": penalty,
+
+        "critical_issues": critical,
+        "major_issues": major,
+        "minor_issues": minor,
+
+        "lqa_segment_severity": severity_counter,
+
         "issue_categories": Counter(
             cat.strip()
             for r in records
