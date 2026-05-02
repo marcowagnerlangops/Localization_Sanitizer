@@ -1,3 +1,4 @@
+# sanitizer_core.py
 from __future__ import annotations
 
 import re
@@ -93,41 +94,19 @@ def normalize_language_code(code: str) -> str:
 
 class MarkupCleaner:
     """
-    Removes technical tags from visible text checks.
-
-    Valid tag start:
-    < immediately followed by letter or number
-
-    Examples:
-    <bpt>
-    <x1>
-    <ph id="1">
-
-    Not a tag:
-    < 5
-    x < y
-    A < B
+    Only treat < as tag start when followed immediately
+    by a letter or number.
     """
 
-    REAL_TAG = re.compile(
-        r"<[A-Za-z0-9][^>]*>",
-        flags=re.DOTALL
-    )
-
-    ESCAPED_TAG = re.compile(
-        r"&lt;[A-Za-z0-9].*?&gt;",
-        flags=re.DOTALL
-    )
+    REAL_TAG = re.compile(r"<[A-Za-z0-9][^>]*>", flags=re.DOTALL)
+    ESCAPED_TAG = re.compile(r"&lt;[A-Za-z0-9].*?&gt;", flags=re.DOTALL)
 
     @staticmethod
     def strip_markup(text: str) -> str:
         value = text or ""
-
         value = MarkupCleaner.ESCAPED_TAG.sub(" ", value)
         value = MarkupCleaner.REAL_TAG.sub(" ", value)
-
         value = re.sub(r"\s+", " ", value).strip()
-
         return value
 
 
@@ -150,9 +129,10 @@ class BrandRules:
             t = str(row.iloc[1]).strip()
 
             if s and t:
-                self.rules.append(
-                    {"source": s, "required": t}
-                )
+                self.rules.append({
+                    "source": s,
+                    "required": t
+                })
 
         return len(self.rules)
 
@@ -172,9 +152,10 @@ class GlossaryRules:
             t = str(row.iloc[1]).strip()
 
             if s and t:
-                self.rules.append(
-                    {"source": s, "required": t}
-                )
+                self.rules.append({
+                    "source": s,
+                    "required": t
+                })
 
         return len(self.rules)
 
@@ -231,22 +212,15 @@ class RepairEngine:
         for r in records:
             old = (r.source_text, r.target_text)
 
-            r.source_text, a1 = RepairEngine.repair_text(
-                r.source_text, settings
-            )
-
-            r.target_text, a2 = RepairEngine.repair_text(
-                r.target_text, settings
-            )
+            r.source_text, a1 = RepairEngine.repair_text(r.source_text, settings)
+            r.target_text, a2 = RepairEngine.repair_text(r.target_text, settings)
 
             r.repair_actions = "; ".join(
                 [f"Source: {x}" for x in a1] +
                 [f"Target: {x}" for x in a2]
             )
 
-            new = (r.source_text, r.target_text)
-
-            if old != new:
+            if old != (r.source_text, r.target_text):
                 changed += 1
 
         return changed
@@ -260,21 +234,20 @@ LQA_WEIGHTS = {
     "Critical": 10,
     "Major": 5,
     "Minor": 1,
-    "OK": 0
+    "OK": 0,
 }
 
 LQA_ORDER = {
     "OK": 0,
     "Minor": 1,
     "Major": 2,
-    "Critical": 3
+    "Critical": 3,
 }
 
 
 def worst(items):
     if not items:
         return "OK"
-
     return sorted(items, key=lambda x: LQA_ORDER[x])[-1]
 
 
@@ -294,7 +267,6 @@ def score_label(score):
 
 class QAEngine:
 
-    # strict tag opener only
     TAG_PATTERN = re.compile(
         r"</?[A-Za-z0-9][A-Za-z0-9:_-]*(?:\s[^>]*)?>"
     )
@@ -307,17 +279,11 @@ class QAEngine:
 
     @staticmethod
     def placeholders(text):
-        return re.findall(
-            r"\{.*?\}|%s|%d",
-            text or ""
-        )
+        return re.findall(r"\{.*?\}|%s|%d", text or "")
 
     @staticmethod
     def numbers(text):
-        return re.findall(
-            r"\d+(?:[\.,]\d+)?",
-            text or ""
-        )
+        return re.findall(r"\d+(?:[\.,]\d+)?", text or "")
 
     @staticmethod
     def end_punct(text):
@@ -327,7 +293,6 @@ class QAEngine:
     @staticmethod
     def malformed_tag(text):
         txt = text or ""
-
         tags = QAEngine.TAG_PATTERN.findall(txt)
 
         if not tags:
@@ -335,8 +300,7 @@ class QAEngine:
 
         opens = sum(
             1 for t in tags
-            if not t.startswith("</")
-            and not t.endswith("/>")
+            if not t.startswith("</") and not t.endswith("/>")
         )
 
         closes = sum(
@@ -347,16 +311,17 @@ class QAEngine:
         return opens != closes
 
     @staticmethod
+    def whole_word(term, text):
+        patt = r"\b" + re.escape(term) + r"\b"
+        return re.search(patt, text or "", re.I) is not None
+
+    @staticmethod
     def brand_violations(source, target, rules):
         out = []
 
         for r in rules.rules:
-            patt = r"\b" + re.escape(r["source"]) + r"\b"
-
-            if re.search(patt, source, re.I):
-                req = r"\b" + re.escape(r["required"]) + r"\b"
-
-                if not re.search(req, target, re.I):
+            if QAEngine.whole_word(r["source"], source):
+                if not QAEngine.whole_word(r["required"], target):
                     out.append(
                         f"Protected term '{r['source']}' should be '{r['required']}'"
                     )
@@ -368,12 +333,8 @@ class QAEngine:
         out = []
 
         for r in rules.rules:
-            patt = r"\b" + re.escape(r["source"]) + r"\b"
-
-            if re.search(patt, source, re.I):
-                req = r"\b" + re.escape(r["required"]) + r"\b"
-
-                if not re.search(req, target, re.I):
+            if QAEngine.whole_word(r["source"], source):
+                if not QAEngine.whole_word(r["required"], target):
                     out.append(
                         f"Glossary violation: {r['source']} -> {r['required']}"
                     )
@@ -385,66 +346,36 @@ class QAEngine:
         if not is_german(record.target_lang):
             return []
 
-        visible = MarkupCleaner.strip_markup(
-            record.target_text
-        )
-
+        visible = MarkupCleaner.strip_markup(record.target_text)
         issues = []
 
         if '"' in visible:
-            issues.append(
-                "German QA: straight quotes used"
-            )
+            issues.append("German QA: straight quotes used")
 
-        if re.search(
-            r"\b(\w+)\s+\1\b",
-            visible,
-            re.I
-        ):
-            issues.append(
-                "German QA: repeated word"
-            )
+        if re.search(r"\b(\w+)\s+\1\b", visible, re.I):
+            issues.append("German QA: repeated word")
+
+        if re.search(r"\s+[.,:;!?]", visible):
+            issues.append("German QA: space before punctuation")
 
         return issues
 
     @staticmethod
     def typography(text, settings):
         visible = MarkupCleaner.strip_markup(text)
-
         out = []
 
-        if settings.flag_double_ellipsis:
-            if re.search(r"\.{4,}", visible):
-                out.append(
-                    "Repeated ellipsis / too many dots"
-                )
+        if settings.flag_double_ellipsis and re.search(r"\.{4,}", visible):
+            out.append("Repeated ellipsis / too many dots")
 
-        if settings.flag_double_dot:
-            if re.search(
-                r"(?<!\.)\.\.(?!\.)",
-                visible
-            ):
-                out.append(
-                    "Double period detected"
-                )
+        if settings.flag_double_dot and re.search(r"(?<!\.)\.\.(?!\.)", visible):
+            out.append("Double period detected")
 
-        if settings.flag_double_spaces:
-            if re.search(
-                r" {2,}",
-                visible
-            ):
-                out.append(
-                    "Double spaces detected"
-                )
+        if settings.flag_double_spaces and re.search(r" {2,}", visible):
+            out.append("Double spaces detected")
 
-        if settings.flag_space_before_period:
-            if re.search(
-                r"\s+\.",
-                visible
-            ):
-                out.append(
-                    "Space before period detected"
-                )
+        if settings.flag_space_before_period and re.search(r"\s+\.", visible):
+            out.append("Space before period detected")
 
         return out
 
@@ -460,10 +391,7 @@ class QAEngine:
             s = r.source_text or ""
             t = r.target_text or ""
 
-            # -------------------
             # Critical
-            # -------------------
-
             if not t.strip():
                 QAEngine.add_issue(
                     issues, cats, lqa,
@@ -507,10 +435,7 @@ class QAEngine:
                         "Critical"
                     )
 
-            # -------------------
             # Major
-            # -------------------
-
             if settings.flag_source_equals_target:
                 if s.strip() and t.strip() and s.strip() == t.strip():
                     QAEngine.add_issue(
@@ -520,10 +445,18 @@ class QAEngine:
                         "Major"
                     )
 
+            if settings.flag_length_ratio and s:
+                ratio = len(t) / max(1, len(s))
+                if ratio < 0.35 or ratio > 2.8:
+                    QAEngine.add_issue(
+                        issues, cats, lqa,
+                        "Length",
+                        "Suspicious length ratio",
+                        "Major"
+                    )
+
             if settings.flag_brand_protection:
-                for x in QAEngine.brand_violations(
-                    s, t, brand_rules
-                ):
+                for x in QAEngine.brand_violations(s, t, brand_rules):
                     QAEngine.add_issue(
                         issues, cats, lqa,
                         "Brand Protection",
@@ -532,9 +465,7 @@ class QAEngine:
                     )
 
             if settings.flag_glossary_violations:
-                for x in QAEngine.glossary_violations(
-                    s, t, glossary_rules
-                ):
+                for x in QAEngine.glossary_violations(s, t, glossary_rules):
                     QAEngine.add_issue(
                         issues, cats, lqa,
                         "Glossary",
@@ -542,10 +473,7 @@ class QAEngine:
                         "Major"
                     )
 
-            # -------------------
             # Minor
-            # -------------------
-
             if settings.flag_punctuation_issues:
                 if QAEngine.end_punct(s) != QAEngine.end_punct(t):
                     QAEngine.add_issue(
@@ -575,20 +503,14 @@ class QAEngine:
             # Finalize
             r.issue_count = len(issues)
             r.severity = "Issues" if issues else "OK"
-            r.issue_categories = "; ".join(
-                sorted(set(cats))
-            )
+            r.issue_categories = "; ".join(sorted(set(cats)))
             r.issue_details = "; ".join(issues)
 
             sev = [x[0] for x in lqa]
 
             r.lqa_severity = worst(sev)
-            r.lqa_penalty = sum(
-                LQA_WEIGHTS[x[0]] for x in lqa
-            )
-            r.lqa_details = "; ".join(
-                f"{a}: {b}" for a, b in lqa
-            )
+            r.lqa_penalty = sum(LQA_WEIGHTS[x[0]] for x in lqa)
+            r.lqa_details = "; ".join(f"{a}: {b}" for a, b in lqa)
 
 
 # ============================================================
@@ -598,25 +520,62 @@ class QAEngine:
 def build_stats(records):
 
     penalty = sum(r.lqa_penalty for r in records)
-
     score = max(0, 100 - penalty)
+
+    critical = 0
+    major = 0
+    minor = 0
+
+    severity_counter = Counter()
+    ai_status_counter = Counter()
+
+    for r in records:
+        severity_counter[r.lqa_severity] += 1
+
+        if r.ai_status:
+            ai_status_counter[r.ai_status] += 1
+
+        details = r.lqa_details or ""
+
+        critical += details.count("Critical:")
+        major += details.count("Major:")
+        minor += details.count("Minor:")
+
+    ai_reviewed = sum(
+        1 for r in records
+        if r.ai_status not in {"", "Not reviewed"}
+    )
 
     return {
         "total_segments": len(records),
+
         "segments_with_issues": sum(
             1 for r in records if r.issue_count
         ),
+
         "clean_segments": sum(
             1 for r in records if not r.issue_count
         ),
+
         "quality_score": score,
         "quality_label": score_label(score),
+        "total_lqa_penalty": penalty,
+
+        "critical_issues": critical,
+        "major_issues": major,
+        "minor_issues": minor,
+
+        "lqa_segment_severity": severity_counter,
+
         "issue_categories": Counter(
             cat.strip()
             for r in records
             for cat in r.issue_categories.split(";")
             if cat.strip()
         ),
+
+        "ai_reviewed_segments": ai_reviewed,
+        "ai_status_counts": ai_status_counter,
     }
 
 
