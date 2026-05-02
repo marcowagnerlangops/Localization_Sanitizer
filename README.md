@@ -49,7 +49,7 @@ Built for translators, reviewers, localization teams, vendors, and language oper
 - Mark segments as reviewed
 
 ### AI Review Engine
-Bring your own AI provider:
+Bring your own AI provider (APIs are not stored and last for one session):
 
 - OpenAI
 - Ollama (local LLMs)
