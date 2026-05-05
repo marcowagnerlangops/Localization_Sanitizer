@@ -621,7 +621,12 @@ def main():
                         height=100,
                         disabled=True,
                     )
-    
+                st.text_area(
+                    "Source",
+                    value=record.source_text,
+                    height=150,
+                    disabled=True,
+                )
                 # Editable fields
                 edited_target = st.text_area(
                     "Target",
