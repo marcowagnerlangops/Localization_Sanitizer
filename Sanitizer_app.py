@@ -515,21 +515,16 @@ def main():
                 height=720,
             )
 
-    # ======================================================
+       # ======================================================
     # TAB 4 REVIEW & EDIT
     # ======================================================
-
+    
     with tabs[3]:
         if not st.session_state.records:
             st.info("No records loaded.")
         else:
             st.subheader("Review & Edit")
-
-            st.write(
-                "Review problematic segments, edit the target text, apply AI suggestions, "
-                "and re-run QA immediately."
-            )
-
+    
             review_mode = st.selectbox(
                 "Review Queue",
                 [
@@ -544,165 +539,152 @@ def main():
                     "All Segments",
                 ],
             )
-
+    
             records = st.session_state.records
-
+    
             if review_mode == "All Issues":
                 review_records = [r for r in records if r.issue_count > 0]
-
+    
             elif review_mode in {"Critical", "Major", "Minor"}:
                 review_records = [
-                    r for r in records
-                    if r.lqa_severity == review_mode
+                    r for r in records if r.lqa_severity == review_mode
                 ]
-
+    
             elif review_mode == "Glossary":
                 review_records = [
-                    r for r in records
-                    if "Glossary" in (r.issue_categories or "")
+                    r for r in records if "Glossary" in (r.issue_categories or "")
                 ]
-
+    
             elif review_mode == "Brand Protection":
                 review_records = [
-                    r for r in records
-                    if "Brand Protection" in (r.issue_categories or "")
+                    r for r in records if "Brand Protection" in (r.issue_categories or "")
                 ]
-
+    
             elif review_mode == "Typography":
                 review_records = [
-                    r for r in records
-                    if "Typography" in (r.issue_categories or "")
+                    r for r in records if "Typography" in (r.issue_categories or "")
                 ]
-
+    
             elif review_mode == "AI Suggestions":
                 review_records = [
-                    r for r in records
-                    if getattr(r, "ai_suggestion", "")
+                    r for r in records if getattr(r, "ai_suggestion", "")
                 ]
-
+    
             else:
                 review_records = records
-
+    
             if not review_records:
-                st.success("No records found for the selected review queue.")
+                st.success("No records found for this queue.")
             else:
-                st.info(f"{len(review_records)} segment(s) in this review queue.")
-
+                # Persist selection across reruns
+                if "selected_record_id" not in st.session_state:
+                    st.session_state.selected_record_id = review_records[0].record_id
+    
                 selected_id = st.selectbox(
                     "Select Segment",
                     [r.record_id for r in review_records],
-                    format_func=lambda rid: (
-                        f"Record {rid} | "
-                        f"{next(r for r in review_records if r.record_id == rid).lqa_severity} | "
-                        f"{next(r for r in review_records if r.record_id == rid).issue_categories}"
-                    ),
+                    index=[r.record_id for r in review_records].index(
+                        st.session_state.selected_record_id
+                    )
+                    if st.session_state.selected_record_id in [r.record_id for r in review_records]
+                    else 0,
                 )
-
+    
+                st.session_state.selected_record_id = selected_id
+    
                 record = next(
                     r for r in st.session_state.records
                     if r.record_id == selected_id
                 )
-
+    
+                # Header
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Record ID", record.record_id)
                 c2.metric("LQA Severity", record.lqa_severity)
                 c3.metric("Penalty", record.lqa_penalty)
                 c4.metric("Issue Count", record.issue_count)
-
+    
                 st.divider()
-
+    
                 st.caption(
-                    f"File: {record.file_name} | "
-                    f"Type: {record.file_type} | "
-                    f"Unit ID: {record.unit_id}"
+                    f"File: {record.file_name} | Type: {record.file_type} | Unit ID: {record.unit_id}"
                 )
-
-                with st.expander("Issue Details", expanded=True):
-                    st.write(record.issue_details or "No issues.")
-
-                    if record.lqa_details:
-                        st.write("**LQA Details:**")
-                        st.write(record.lqa_details)
-
+    
+                st.write("**Issues:**", record.issue_details or "-")
+                st.write("**LQA:**", record.lqa_details or "-")
+    
                 if getattr(record, "ai_suggestion", ""):
-                    with st.expander("AI Suggestion", expanded=True):
-                        st.write("**AI Status:**", record.ai_status)
-                        st.write("**AI Severity:**", record.ai_severity or "-")
-                        st.write("**AI Explanation:**", record.ai_explanation or "-")
-                        st.text_area(
-                            "AI Suggestion Text",
-                            value=record.ai_suggestion,
-                            height=120,
-                            disabled=True,
-                        )
-
-                with st.form("edit_segment_form"):
+                    st.write("**AI Suggestion:**")
                     st.text_area(
-                        "Source",
-                        value=record.source_text,
-                        height=150,
+                        "AI Suggestion",
+                        value=record.ai_suggestion,
+                        height=100,
                         disabled=True,
                     )
-
-                    edited_target = st.text_area(
-                        "Target",
-                        value=record.target_text,
-                        height=180,
-                    )
-
-                    edited_notes = st.text_area(
-                        "Notes",
-                        value=record.notes,
-                        height=80,
-                    )
-
-                    c1, c2, c3 = st.columns(3)
-
-                    with c1:
-                        save_clicked = st.form_submit_button(
-                            "Save Changes",
-                            use_container_width=True,
-                        )
-
-                    with c2:
-                        apply_ai_clicked = st.form_submit_button(
-                            "Apply AI Suggestion",
-                            use_container_width=True,
-                            disabled=not bool(getattr(record, "ai_suggestion", "")),
-                        )
-
-                    with c3:
-                        mark_reviewed_clicked = st.form_submit_button(
-                            "Mark Reviewed",
-                            use_container_width=True,
-                        )
-
-                if save_clicked:
-                    record.target_text = edited_target
-                    record.notes = edited_notes
-                    rerun_qa(settings)
-                    log(f"Edited record {record.record_id}")
-                    st.success("Changes saved and QA re-run.")
-                    st.rerun()
-
-                if apply_ai_clicked and getattr(record, "ai_suggestion", ""):
-                    record.target_text = record.ai_suggestion
-                    record.notes = (
-                        (record.notes + "; ") if record.notes else ""
-                    ) + "AI suggestion accepted"
-                    rerun_qa(settings)
-                    log(f"Applied AI suggestion for record {record.record_id}")
-                    st.success("AI suggestion applied and QA re-run.")
-                    st.rerun()
-
-                if mark_reviewed_clicked:
-                    record.notes = (
-                        (record.notes + "; ") if record.notes else ""
-                    ) + "Reviewed"
-                    log(f"Marked record {record.record_id} as reviewed")
-                    st.success("Record marked as reviewed.")
-                    st.rerun()
-
+    
+                # Editable fields
+                edited_target = st.text_area(
+                    "Target",
+                    value=record.target_text,
+                    height=180,
+                )
+    
+                edited_notes = st.text_area(
+                    "Notes",
+                    value=record.notes,
+                    height=80,
+                )
+    
+                # Buttons OUTSIDE form (important fix)
+                c1, c2, c3 = st.columns(3)
+    
+                # Helper to go next
+                def go_next():
+                    idx = [r.record_id for r in review_records].index(record.record_id)
+                    if idx < len(review_records) - 1:
+                        st.session_state.selected_record_id = review_records[idx + 1].record_id
+    
+                with c1:
+                    if st.button("Save Changes", use_container_width=True):
+                        record.target_text = edited_target
+                        record.notes = edited_notes
+    
+                        rerun_qa(settings)
+                        log(f"Edited record {record.record_id}")
+    
+                        go_next()
+                        st.success("Saved.")
+                        st.rerun()
+    
+                with c2:
+                    if st.button(
+                        "Apply AI Suggestion",
+                        use_container_width=True,
+                        disabled=not bool(getattr(record, "ai_suggestion", "")),
+                    ):
+                        record.target_text = record.ai_suggestion
+                        record.notes = (
+                            (record.notes + "; ") if record.notes else ""
+                        ) + "AI applied"
+    
+                        rerun_qa(settings)
+                        log(f"AI applied for record {record.record_id}")
+    
+                        go_next()
+                        st.success("AI applied.")
+                        st.rerun()
+    
+                with c3:
+                    if st.button("Mark Reviewed", use_container_width=True):
+                        record.notes = (
+                            (record.notes + "; ") if record.notes else ""
+                        ) + "Reviewed"
+    
+                        log(f"Marked record {record.record_id} as reviewed")
+    
+                        go_next()
+                        st.success("Marked as reviewed.")
+                        st.rerun()
     # ======================================================
     # TAB 5 AI REVIEW
     # ======================================================
